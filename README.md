@@ -2,6 +2,8 @@
 
 A collection of microbenchmarks for NVIDIA Blackwell (SM 100) GPUs, covering memory throughput, latency, and tensor core (UMMA) performance.
 
+https://newsletter.semianalysis.com/p/dissecting-nvidia-blackwell-tensor
+
 ## Acknowledgements
 
 Compute for this project is generously sponsored by **Nebius** and **Verda**.
