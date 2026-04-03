@@ -4,6 +4,9 @@ A collection of microbenchmarks for NVIDIA Blackwell (SM 100) GPUs, covering mem
 
 https://newsletter.semianalysis.com/p/dissecting-nvidia-blackwell-tensor
 
+<img width="1456" height="1231" alt="image" src="https://github.com/user-attachments/assets/104eabab-7c77-403f-b669-3402cc7a4b86" />
+
+
 ## Acknowledgements
 
 Compute for this project is generously sponsored by **Nebius** and **Verda**.
