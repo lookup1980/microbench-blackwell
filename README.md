@@ -1,8 +1,22 @@
 # Blackwell Microbenchmarks
 
-A collection of microbenchmarks for NVIDIA Blackwell (SM 100) GPUs, covering memory throughput, latency, and tensor core (UMMA) performance.
+A collection of microbenchmarks for NVIDIA Blackwell (SM 100) GPUs, covering
+memory throughput, latency, tensor core (UMMA) performance, and HBM-resident
+elementwise throughput.
 
 https://newsletter.semianalysis.com/p/dissecting-nvidia-blackwell-tensor
+
+## Benchmarks
+
+| Path | Purpose |
+|---|---|
+| `ldgsts_throughput/` | LDGSTS HBM throughput |
+| `tma2d_throughput/` | TMA 2D HBM throughput |
+| `ldgsts_latency/` | LDGSTS latency |
+| `tma2d_latency/` | TMA 2D latency |
+| `umma_throughput/` | UMMA tensor-core throughput |
+| `umma_latency/` | UMMA tensor-core latency |
+| `elementwise_throughput/` | fp32 HBM-resident activation/elementwise throughput |
 
 <img width="1456" height="1231" alt="image" src="https://github.com/user-attachments/assets/104eabab-7c77-403f-b669-3402cc7a4b86" />
 
