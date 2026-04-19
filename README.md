@@ -6,6 +6,11 @@ elementwise throughput.
 
 https://newsletter.semianalysis.com/p/dissecting-nvidia-blackwell-tensor
 
+## RTX 5090
+
+For the current `RTX 5090` support matrix, setup, exact commands, and known blockers, see
+[RTX5090_RUNBOOK.md](RTX5090_RUNBOOK.md).
+
 ## Benchmarks
 
 | Path | Purpose |
