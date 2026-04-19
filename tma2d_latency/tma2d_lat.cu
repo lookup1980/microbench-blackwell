@@ -18,12 +18,20 @@
 
 
 constexpr int NUM_ITERS = 10;
-constexpr int32_t NUM_SMS = 148; // B200 has 148 SMs
-constexpr int32_t L2_SIZE = 132644864; // B200 L2 cache is 126.5 MiB
 
 // Size of one tile
 constexpr size_t TILE_BYTES = SMEM_WIDTH * SMEM_HEIGHT * sizeof(float);
 constexpr size_t BARRIERS_OFFSET = (TILE_BYTES + 7) & ~size_t(7);
+
+#define CUDA_CHECK(expr)                                                     \
+    do {                                                                     \
+        cudaError_t status__ = (expr);                                       \
+        if (status__ != cudaSuccess) {                                       \
+            fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,    \
+                    cudaGetErrorString(status__));                           \
+            return 1;                                                        \
+        }                                                                    \
+    } while (0)
 
 // ============================================================================
 // Kernel: single TMA 2D load per CTA, measuring round-trip latency
@@ -86,20 +94,36 @@ __global__ void tma2dLatKernel(const __grid_constant__ CUtensorMap tensor_map, i
     }
 }
 
+int get_device_attribute(cudaDeviceAttr attr, const char* name) {
+    int value = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&value, attr, 0));
+    if (value <= 0) {
+        fprintf(stderr, "Invalid %s reported by device: %d\n", name, value);
+        std::exit(1);
+    }
+    return value;
+}
 
 int main() {
     constexpr int32_t THREADS_PER_CTA = 32;    // 1 warp
-    constexpr size_t MAX_SMEM_BYTES = 232448;  // B200 max dynamic SMEM = 227 KiB
     static_assert(SMEM_WIDTH  <= 256, "SMEM_WIDTH must be <= 256 (TMA boxDim limit per dimension)");
     static_assert(SMEM_HEIGHT <= 256, "SMEM_HEIGHT must be <= 256 (TMA boxDim limit per dimension)");
 
-    int32_t num_blks = NUM_SMS * CTAS_PER_SM;
+    int32_t num_sms = get_device_attribute(cudaDevAttrMultiProcessorCount, "SM count");
+    int32_t l2_size = get_device_attribute(cudaDevAttrL2CacheSize, "L2 size");
+    int32_t max_smem_bytes = get_device_attribute(
+        cudaDevAttrMaxSharedMemoryPerBlockOptin, "max dynamic shared memory"
+    );
+
+    int32_t num_blks = num_sms * CTAS_PER_SM;
     size_t data_size = (size_t)NUM_ITERS * num_blks * TILE_BYTES;
     uint64_t gmem_height = (uint64_t)NUM_ITERS * num_blks * SMEM_HEIGHT;
 
     fprintf(stderr,
-        "Config: CTAS_PER_SM=%d SMEM_WIDTH=%d SMEM_HEIGHT=%d TILE_BYTES=%zu\n",
-        CTAS_PER_SM, SMEM_WIDTH, SMEM_HEIGHT, TILE_BYTES
+        "Config: CTAS_PER_SM=%d SMEM_WIDTH=%d SMEM_HEIGHT=%d TILE_BYTES=%zu\n"
+        "  num_sms=%d l2_size=%.2f MiB max_smem=%.1f KiB\n",
+        CTAS_PER_SM, SMEM_WIDTH, SMEM_HEIGHT, TILE_BYTES,
+        num_sms, l2_size / (1024.0 * 1024.0), max_smem_bytes / 1024.0
     );
 
     float *data = (float*) malloc(data_size);
@@ -109,9 +133,9 @@ int main() {
     }
 
     float *d_data;
-    cudaMalloc(&d_data, data_size);
-    cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMalloc(&d_data, data_size));
+    CUDA_CHECK(cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // TMA tensor map
     CUtensorMap tensor_map{};
@@ -138,15 +162,15 @@ int main() {
     assert(res == CUDA_SUCCESS);
 
     // Pin SMEM allocation to max so the HW carveout is constant across configs
-    cudaFuncSetAttribute(
+    CUDA_CHECK(cudaFuncSetAttribute(
         tma2dLatKernel,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
-        MAX_SMEM_BYTES
-    );
+        max_smem_bytes
+    ));
 
     // Device + host buffers for per-block cycle counts
     uint32_t *d_cycles;
-    cudaMalloc(&d_cycles, num_blks * sizeof(uint32_t));
+    CUDA_CHECK(cudaMalloc(&d_cycles, num_blks * sizeof(uint32_t)));
     uint32_t *h_cycles = (uint32_t*) malloc(num_blks * sizeof(uint32_t));
 
     // Accumulators across iterations
@@ -156,13 +180,13 @@ int main() {
     for (int i = 0; i < NUM_ITERS; i++) {
         // Flush L2
         void *flush_arr;
-        cudaMalloc(&flush_arr, L2_SIZE);
-        cudaMemset(flush_arr, 0xA5, L2_SIZE);
-        cudaDeviceSynchronize();
-        cudaFree(flush_arr);
+        CUDA_CHECK(cudaMalloc(&flush_arr, l2_size));
+        CUDA_CHECK(cudaMemset(flush_arr, 0xA5, l2_size));
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaFree(flush_arr));
 
         int32_t seg_row_offset = (int32_t)((int64_t)i * num_blks * SMEM_HEIGHT);
-        tma2dLatKernel<<<num_blks, THREADS_PER_CTA, MAX_SMEM_BYTES>>>(
+        tma2dLatKernel<<<num_blks, THREADS_PER_CTA, max_smem_bytes>>>(
             tensor_map, seg_row_offset, d_cycles);
         cudaError_t err = cudaDeviceSynchronize();
         if (err != cudaSuccess) {
@@ -170,7 +194,7 @@ int main() {
             return 1;
         }
 
-        cudaMemcpy(h_cycles, d_cycles, num_blks * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(h_cycles, d_cycles, num_blks * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
         std::sort(h_cycles, h_cycles + num_blks);
         uint32_t iter_min = h_cycles[0];
@@ -196,15 +220,15 @@ int main() {
     // Re-run once more to get clean min/max
     {
         void *flush_arr;
-        cudaMalloc(&flush_arr, L2_SIZE);
-        cudaMemset(flush_arr, 0xA5, L2_SIZE);
-        cudaDeviceSynchronize();
-        cudaFree(flush_arr);
+        CUDA_CHECK(cudaMalloc(&flush_arr, l2_size));
+        CUDA_CHECK(cudaMemset(flush_arr, 0xA5, l2_size));
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaFree(flush_arr));
 
-        tma2dLatKernel<<<num_blks, THREADS_PER_CTA, MAX_SMEM_BYTES>>>(
+        tma2dLatKernel<<<num_blks, THREADS_PER_CTA, max_smem_bytes>>>(
             tensor_map, 0, d_cycles);
-        cudaDeviceSynchronize();
-        cudaMemcpy(h_cycles, d_cycles, num_blks * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaMemcpy(h_cycles, d_cycles, num_blks * sizeof(uint32_t), cudaMemcpyDeviceToHost));
         std::sort(h_cycles, h_cycles + num_blks);
         overall_min = h_cycles[0];
         overall_max = h_cycles[num_blks - 1];
@@ -212,8 +236,8 @@ int main() {
 
     printf("SUMMARY,%u,%u,%u\n", overall_med, overall_min, overall_max);
 
-    cudaFree(d_cycles);
-    cudaFree(d_data);
+    CUDA_CHECK(cudaFree(d_cycles));
+    CUDA_CHECK(cudaFree(d_data));
     free(h_cycles);
     free(data);
     return 0;
