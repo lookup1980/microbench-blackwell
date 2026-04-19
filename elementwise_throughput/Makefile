@@ -1,4 +1,6 @@
-NVCCFLAGS := -std=c++17 -O3 -lineinfo -gencode arch=compute_100,code=sm_100
+NVCC ?= nvcc
+CUDA_GENCODE ?= -arch=native
+NVCCFLAGS := -std=c++17 -O3 -lineinfo $(CUDA_GENCODE)
 
 OP ?= exp
 THREADS_PER_BLOCK ?= 256
@@ -29,10 +31,10 @@ DEFINES := -DOP_KIND=$(OP_KIND) \
 all: elementwise_tput.out elementwise_tput.ptx
 
 elementwise_tput.out: elementwise_tput.cu
-	nvcc $(NVCCFLAGS) $(DEFINES) -o $@ $<
+	$(NVCC) $(NVCCFLAGS) $(DEFINES) -o $@ $<
 
 elementwise_tput.ptx: elementwise_tput.cu
-	nvcc $(NVCCFLAGS) $(DEFINES) -ptx -o $@ $<
+	$(NVCC) $(NVCCFLAGS) $(DEFINES) -ptx -o $@ $<
 
 bench: elementwise_tput.out
 	sudo $$(which ncu) --clock-control none \

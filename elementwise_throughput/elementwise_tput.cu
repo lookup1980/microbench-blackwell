@@ -6,8 +6,6 @@
 
 #include <cuda_runtime.h>
 
-constexpr int32_t NUM_SMS = 148;  // B200 has 148 SMs
-
 #ifndef OP_KIND
 #define OP_KIND 0
 #endif
@@ -125,6 +123,16 @@ int parse_int_arg(const char* text) {
     return static_cast<int>(value);
 }
 
+int device_multiprocessor_count() {
+    int sms = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0));
+    if (sms <= 0) {
+        fprintf(stderr, "Invalid SM count reported by device: %d\n", sms);
+        std::exit(1);
+    }
+    return sms;
+}
+
 int main(int argc, char** argv) {
     size_t elements = size_t{1} << 28;
     int warmup_iters = 5;
@@ -154,7 +162,7 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaMalloc(&input, bytes));
     CUDA_CHECK(cudaMalloc(&output, bytes));
 
-    int blocks = NUM_SMS * CTAS_PER_SM;
+    int blocks = device_multiprocessor_count() * CTAS_PER_SM;
     init_kernel<<<blocks, THREADS_PER_BLOCK>>>(input, elements);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaMemset(output, 0, bytes));
