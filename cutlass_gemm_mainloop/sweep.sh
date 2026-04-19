@@ -83,10 +83,17 @@ TOTAL=${#ALL_CONFIGS[@]}
 echo "=== Phase 1: Building $TOTAL binaries (max $MAX_JOBS parallel jobs) ==="
 
 # ---- Phase 1: Parallel builds ----
-CUTLASS_PATH="../../cutlass"
-NVCCFLAGS="-std=c++17 --expt-relaxed-constexpr -gencode=arch=compute_100a,code=\"sm_100a,compute_100a\""
+CUTLASS_PATH="${CUTLASS_PATH:-../../cutlass}"
+NVCC="${NVCC:-nvcc}"
+CUDA_GENCODE="${CUDA_GENCODE:--arch=native}"
+NVCCFLAGS="-std=c++17 --expt-relaxed-constexpr ${CUDA_GENCODE}"
 INCLUDES="-I${CUTLASS_PATH}/include -I${CUTLASS_PATH}/tools/util/include"
 SRC="$SCRIPT_DIR/cutlass_gemm_bench.cu"
+
+if [[ ! -d "${CUTLASS_PATH}/include" ]]; then
+  echo "CUTLASS not found at ${CUTLASS_PATH}. Set CUTLASS_PATH=/path/to/cutlass." >&2
+  exit 1
+fi
 
 job_count=0
 fail_count=0
@@ -105,7 +112,7 @@ for cfg in "${ALL_CONFIGS[@]}"; do
   DEFINES="-DTILE_M=$TM -DTILE_N=$TN -DTILE_K=$TK -DSTAGES=$S -DDTYPE_ID=$D"
 
   (
-    if nvcc $NVCCFLAGS $INCLUDES $DEFINES -lcuda -o "$BIN_PATH" "$SRC" > "$LOG_PATH" 2>&1; then
+    if $NVCC $NVCCFLAGS $INCLUDES $DEFINES -lcuda -o "$BIN_PATH" "$SRC" > "$LOG_PATH" 2>&1; then
       echo "  [OK] $BIN_NAME"
     else
       echo "  [FAIL] $BIN_NAME (see $LOG_PATH)"
