@@ -1,0 +1,6 @@
+Using ncu: /usr/local/cuda/bin/ncu
+Running 1 configurations...
+ncu failed for CTAs=1, stages=1, threads=64, load=float4:
+
+[1/1] FAILED: CTAs=1, stages=1, threads=64, load=float4
+No successful results

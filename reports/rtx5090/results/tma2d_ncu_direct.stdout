@@ -1,0 +1,6 @@
+==WARNING== Note: Running with unmodified GPU clocks. If not controlled otherwise, profiling results may be inconsistent.
+==PROF== Connected to process 171355 (/home/mgu/github/microbench-blackwell/tma2d_throughput/tma2d_tput.out)
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+Config: CTAS_PER_SM=1 NUM_STAGES=1 SMEM_WIDTH=128 SMEM_HEIGHT=2 BIF_PER_SM=1024
+  num_sms=170 l2_size=96.00 MiB max_smem=99.0 KiB
+==PROF== Disconnected from process 171355

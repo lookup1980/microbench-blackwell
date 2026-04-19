@@ -1,0 +1,2 @@
+CUTLASS not found at ../../cutlass. Set CUTLASS_PATH=/path/to/cutlass.
+make: *** [Makefile:20: cutlass_gemm_bench.out] Error 1

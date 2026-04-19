@@ -1,0 +1,1 @@
+nvcc -std=c++17 -arch=native -DMMA_FORMAT=0 -DMMA_M=64 -DMMA_N=64 -DMMA_K=16 -DCTA_GROUP=1 -DAB_LAYOUT=0 -o umma_lat.out umma_lat.cu

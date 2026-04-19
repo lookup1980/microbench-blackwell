@@ -1,0 +1,4 @@
+Config: CLUSTER=2 SHARING_GROUP=2 WIDTH=128 HEIGHT=2 MODE=1 (explicit_tma_multicast)
+  num_sms=170 l2_size=96.00 MiB max_smem=99.0 KiB
+  Tile: 1024 bytes/load, bif: 4 KiB, smem: 4128 bytes, data: 2047.97 MiB, gmem: 128x4194240
+  Blocks: 170, Groups: 85, Threads/block: 128
