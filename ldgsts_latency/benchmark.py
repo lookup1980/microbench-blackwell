@@ -8,11 +8,11 @@ Each launch reads a distinct DRAM region, and an explicit L2 flush is
 performed between iterations to ensure cold-cache (DRAM) latency.
 """
 
-import subprocess
-import csv
-import sys
-import os
 import argparse
+import csv
+import os
+import subprocess
+import sys
 
 # Load type -> byte size
 LOAD_TYPES = {'float': 4, 'float2': 8, 'float4': 16}
@@ -38,8 +38,23 @@ CSV_FIELDS = [
     'LatencyNsMedian',
 ]
 
-B200_CLOCK_GHZ = 1.965  # B200 SM clock ~1.965 GHz
-NUM_SMS = 148
+def get_sm_clock_ghz():
+    """Best-effort query of max SM clock in GHz via nvidia-smi."""
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=clocks.max.sm",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        mhz = float(result.stdout.strip().splitlines()[0])
+        return mhz / 1000.0
+    except Exception:
+        return None
 
 
 def run_benchmark(ctas, threads, load_t, verbose=False):
@@ -92,7 +107,8 @@ def run_benchmark(ctas, threads, load_t, verbose=False):
                 print(f"stderr: {result.stderr[:500]}", file=sys.stderr)
             return None
 
-        lat_ns_med = lat_cyc_med / B200_CLOCK_GHZ
+        sm_clock_ghz = get_sm_clock_ghz()
+        lat_ns_med = lat_cyc_med / sm_clock_ghz if sm_clock_ghz else ""
 
         return {
             'CTAsPerSM':           ctas,

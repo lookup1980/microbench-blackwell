@@ -1,4 +1,6 @@
-NVCCFLAGS := -std=c++17 -gencode arch=compute_100,code=sm_100
+NVCC ?= nvcc
+CUDA_GENCODE ?= -arch=native
+NVCCFLAGS := -std=c++17 $(CUDA_GENCODE)
 
 # Config (override via: make CTAS_PER_SM=2 THREADS_PER_BLOCK=128 LOAD_T=float4)
 CTAS_PER_SM       ?= 1        # MLA production default
@@ -12,10 +14,10 @@ LDGSTS_DEFINES = -DCTAS_PER_SM=$(CTAS_PER_SM) \
 all: ldgsts_lat.out ldgsts_lat.ptx
 
 ldgsts_lat.out: ldgsts_lat.cu
-	nvcc $(NVCCFLAGS) $(LDGSTS_DEFINES) -o $@ $<
+	$(NVCC) $(NVCCFLAGS) $(LDGSTS_DEFINES) -o $@ $<
 
 ldgsts_lat.ptx: ldgsts_lat.cu
-	nvcc $(NVCCFLAGS) $(LDGSTS_DEFINES) -ptx -o $@ $<
+	$(NVCC) $(NVCCFLAGS) $(LDGSTS_DEFINES) -ptx -o $@ $<
 
 bench: ldgsts_lat.out
 	sudo $$(which ncu) --clock-control none \

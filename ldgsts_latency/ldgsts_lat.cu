@@ -16,9 +16,17 @@
 #endif
 
 constexpr int NUM_ITERS = 10;
-constexpr int32_t NUM_SMS = 148;         // B200 has 148 SMs
-constexpr int32_t L2_SIZE = 132644864;   // B200 L2 cache is 126.5 MiB
 constexpr int32_t LOAD_SIZE = sizeof(LOAD_T);
+
+#define CUDA_CHECK(expr)                                                     \
+    do {                                                                     \
+        cudaError_t status__ = (expr);                                       \
+        if (status__ != cudaSuccess) {                                       \
+            fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,    \
+                    cudaGetErrorString(status__));                           \
+            return 1;                                                        \
+        }                                                                    \
+    } while (0)
 
 // ============================================================================
 // Kernel: exactly 1 LDGSTS per thread — no pipeline stages, no loop.
@@ -51,16 +59,28 @@ __global__ void ldgstsLatKernel(LOAD_T *arr, int32_t iter_offset, uint32_t *cycl
     cycles_out[blockIdx.x * blockDim.x + threadIdx.x] = (uint32_t)(end - start);
 }
 
+int get_device_attribute(cudaDeviceAttr attr, const char* name) {
+    int value = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&value, attr, 0));
+    if (value <= 0) {
+        fprintf(stderr, "Invalid %s reported by device: %d\n", name, value);
+        std::exit(1);
+    }
+    return value;
+}
 
 int main() {
-    int32_t num_blks = NUM_SMS * CTAS_PER_SM;
+    int32_t num_sms = get_device_attribute(cudaDevAttrMultiProcessorCount, "SM count");
+    int32_t l2_size = get_device_attribute(cudaDevAttrL2CacheSize, "L2 size");
+    int32_t num_blks = num_sms * CTAS_PER_SM;
     int32_t threads_total = num_blks * THREADS_PER_BLOCK;
     size_t arr_size = (size_t)NUM_ITERS * threads_total * LOAD_SIZE;
 
     fprintf(stderr,
         "Config: CTAS_PER_SM=%d THREADS_PER_BLOCK=%d LOAD_SIZE=%d\n"
-        "  num_blks=%d threads_total=%d arr_size=%.2f MiB\n",
+        "  num_sms=%d l2_size=%.2f MiB num_blks=%d threads_total=%d arr_size=%.2f MiB\n",
         CTAS_PER_SM, THREADS_PER_BLOCK, LOAD_SIZE,
+        num_sms, l2_size / (1024.0 * 1024.0),
         num_blks, threads_total, arr_size / (1024.0 * 1024.0)
     );
 
@@ -72,13 +92,13 @@ int main() {
     }
 
     LOAD_T *d_arr;
-    cudaMalloc(&d_arr, arr_size);
-    cudaMemcpy(d_arr, arr, arr_size, cudaMemcpyHostToDevice);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMalloc(&d_arr, arr_size));
+    CUDA_CHECK(cudaMemcpy(d_arr, arr, arr_size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // Device + host buffers for per-thread cycle counts
     uint32_t *d_cycles;
-    cudaMalloc(&d_cycles, threads_total * sizeof(uint32_t));
+    CUDA_CHECK(cudaMalloc(&d_cycles, threads_total * sizeof(uint32_t)));
     uint32_t *h_cycles = (uint32_t*) malloc(threads_total * sizeof(uint32_t));
 
     // Accumulators across iterations for overall stats
@@ -91,10 +111,10 @@ int main() {
     for (int i = 0; i < NUM_ITERS; i++) {
         // Flush L2: alloc, touch, free — forces eviction of prior data
         void *flush_buf;
-        cudaMalloc(&flush_buf, L2_SIZE);
-        cudaMemset(flush_buf, 0xA5, L2_SIZE);
-        cudaDeviceSynchronize();
-        cudaFree(flush_buf);
+        CUDA_CHECK(cudaMalloc(&flush_buf, l2_size));
+        CUDA_CHECK(cudaMemset(flush_buf, 0xA5, l2_size));
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaFree(flush_buf));
 
         int32_t iter_offset = i * threads_total;
         ldgstsLatKernel<<<num_blks, THREADS_PER_BLOCK>>>(d_arr, iter_offset, d_cycles);
@@ -104,7 +124,7 @@ int main() {
             return 1;
         }
 
-        cudaMemcpy(h_cycles, d_cycles, threads_total * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(h_cycles, d_cycles, threads_total * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
         // Compute per-iteration stats
         std::sort(h_cycles, h_cycles + threads_total);
@@ -126,8 +146,8 @@ int main() {
     // Print parseable summary to stdout
     printf("SUMMARY,%u,%u,%u\n", overall_med, overall_min, overall_max);
 
-    cudaFree(d_cycles);
-    cudaFree(d_arr);
+    CUDA_CHECK(cudaFree(d_cycles));
+    CUDA_CHECK(cudaFree(d_arr));
     free(h_cycles);
     free(arr);
     return 0;
