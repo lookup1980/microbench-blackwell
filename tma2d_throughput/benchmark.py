@@ -10,6 +10,7 @@ import csv
 import sys
 import os
 import argparse
+import shlex
 
 # Default sweep ranges
 DEFAULT_CTAS_PER_SM = [1]
@@ -39,6 +40,13 @@ def find_ncu():
         if os.path.exists(path):
             return path
     return None
+
+
+def get_ncu_command(ncu_path):
+    prefix = os.environ.get("NCU_PREFIX", "").strip()
+    cmd = shlex.split(prefix) if prefix else []
+    cmd.append(ncu_path)
+    return cmd
 
 
 def parse_ncu_csv(output):
@@ -73,7 +81,7 @@ def run_benchmark(ctas, stages, smem_w, smem_h, ncu_path, verbose=False):
         f"SMEM_HEIGHT={smem_h}",
     ]
     ncu_cmd = [
-        "sudo", ncu_path,
+        *get_ncu_command(ncu_path),
         "--clock-control", "none",
         "--csv",
         "--metrics", ",".join(NCU_METRICS),

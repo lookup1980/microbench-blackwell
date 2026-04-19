@@ -19,8 +19,6 @@
 #endif
 
 
-constexpr int32_t NUM_SMS = 148; // B200 has 148 SMs
-constexpr int32_t L2_SIZE = 132644864; // B200 L2 cache is 126.5 MiB
 constexpr size_t MAX_DATA_VOLUME = 2LL * 1024 * 1024 * 1024;  // 2 GB
 
 constexpr size_t alignDataVolume(size_t factor) {
@@ -30,6 +28,16 @@ constexpr size_t alignDataVolume(size_t factor) {
 // Size of one tile per stage
 constexpr size_t TILE_BYTES = SMEM_WIDTH * SMEM_HEIGHT * sizeof(float);
 constexpr size_t BARRIERS_OFFSET = (NUM_STAGES * TILE_BYTES + 7) & ~size_t(7);
+
+#define CUDA_CHECK(expr)                                                     \
+    do {                                                                     \
+        cudaError_t status__ = (expr);                                       \
+        if (status__ != cudaSuccess) {                                       \
+            fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,    \
+                    cudaGetErrorString(status__));                           \
+            return 1;                                                        \
+        }                                                                    \
+    } while (0)
 
 // ============================================================================
 // Kernel: single-warp multi-stage TMA 2D unicast pipeline
@@ -125,20 +133,37 @@ __global__ void tma2dUnicastKernel(const __grid_constant__ CUtensorMap tensor_ma
     }
 }
 
+int get_device_attribute(cudaDeviceAttr attr, const char* name) {
+    int value = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&value, attr, 0));
+    if (value <= 0) {
+        fprintf(stderr, "Invalid %s reported by device: %d\n", name, value);
+        std::exit(1);
+    }
+    return value;
+}
+
 
 int main() {
     constexpr int32_t THREADS_PER_CTA = 32;    // 1 warp
-    constexpr size_t MAX_SMEM_BYTES = 232448;  // B200 max dynamic SMEM = 227 KiB
     static_assert(SMEM_WIDTH  <= 256, "SMEM_WIDTH must be <= 256 (TMA boxDim limit per dimension)");
     static_assert(SMEM_HEIGHT <= 256, "SMEM_HEIGHT must be <= 256 (TMA boxDim limit per dimension)");
 
-    int32_t num_blks = NUM_SMS * CTAS_PER_SM;
+    int32_t num_sms = get_device_attribute(cudaDevAttrMultiProcessorCount, "SM count");
+    int32_t l2_size = get_device_attribute(cudaDevAttrL2CacheSize, "L2 size");
+    int32_t max_smem_bytes = get_device_attribute(
+        cudaDevAttrMaxSharedMemoryPerBlockOptin, "max dynamic shared memory"
+    );
+
+    int32_t num_blks = num_sms * CTAS_PER_SM;
     size_t data_size = alignDataVolume(num_blks * TILE_BYTES);
     uint64_t gmem_height = (data_size / sizeof(float)) / SMEM_WIDTH;
 
     printf(
-        "Config: CTAS_PER_SM=%d NUM_STAGES=%d SMEM_WIDTH=%d SMEM_HEIGHT=%d BIF_PER_SM=%zu\n",
-        CTAS_PER_SM, NUM_STAGES, SMEM_WIDTH, SMEM_HEIGHT, (size_t)CTAS_PER_SM * NUM_STAGES * TILE_BYTES
+        "Config: CTAS_PER_SM=%d NUM_STAGES=%d SMEM_WIDTH=%d SMEM_HEIGHT=%d BIF_PER_SM=%zu\n"
+        "  num_sms=%d l2_size=%.2f MiB max_smem=%.1f KiB\n",
+        CTAS_PER_SM, NUM_STAGES, SMEM_WIDTH, SMEM_HEIGHT, (size_t)CTAS_PER_SM * NUM_STAGES * TILE_BYTES,
+        num_sms, l2_size / (1024.0 * 1024.0), max_smem_bytes / 1024.0
     );
 
     float *data = (float*) malloc(data_size);
@@ -148,9 +173,9 @@ int main() {
     }
 
     float *d_data;
-    cudaMalloc(&d_data, data_size);
-    cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMalloc(&d_data, data_size));
+    CUDA_CHECK(cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // TMA tensor map
     CUtensorMap tensor_map{};
@@ -178,27 +203,27 @@ int main() {
 
     // Flush L2 cache
     void *flush_arr;
-    cudaMalloc(&flush_arr, L2_SIZE);
-    cudaMemset(flush_arr, 0xA5, L2_SIZE);
-    cudaDeviceSynchronize();
-    cudaFree(flush_arr);
+    CUDA_CHECK(cudaMalloc(&flush_arr, l2_size));
+    CUDA_CHECK(cudaMemset(flush_arr, 0xA5, l2_size));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaFree(flush_arr));
 
     // Pin SMEM allocation to max so the HW carveout is constant across configs
-    cudaFuncSetAttribute(
+    CUDA_CHECK(cudaFuncSetAttribute(
         tma2dUnicastKernel,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
-        MAX_SMEM_BYTES
-    );
+        max_smem_bytes
+    ));
 
     // Launch
-    tma2dUnicastKernel<<<num_blks, THREADS_PER_CTA, MAX_SMEM_BYTES>>>(tensor_map, gmem_height);
+    tma2dUnicastKernel<<<num_blks, THREADS_PER_CTA, max_smem_bytes>>>(tensor_map, gmem_height);
     cudaError_t err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
         fprintf(stderr, "Kernel failed: %s\n", cudaGetErrorString(err));
         return 1;
     }
 
-    cudaFree(d_data);
+    CUDA_CHECK(cudaFree(d_data));
     free(data);
     return 0;
 }
