@@ -1,5 +1,6 @@
-NVCC := nvcc
-NVCCFLAGS := -std=c++17 -gencode arch=compute_100a,code=sm_100a
+NVCC ?= nvcc
+CUDA_GENCODE ?= -arch=native
+NVCCFLAGS := -std=c++17 $(CUDA_GENCODE)
 
 # Defaults
 MMA_FORMAT ?= 0
