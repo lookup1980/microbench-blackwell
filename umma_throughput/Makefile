@@ -1,5 +1,8 @@
-NVCC := nvcc
-NVCCFLAGS := -std=c++17 -gencode arch=compute_100a,code=sm_100a
+NVCC ?= nvcc
+CUDA_GENCODE ?= -arch=native
+NVCCFLAGS := -std=c++17 $(CUDA_GENCODE)
+NCU ?= $(shell which ncu)
+NCU_PREFIX ?=
 
 # Defaults
 MMA_FORMAT ?= 0
@@ -25,7 +28,7 @@ run: umma_tput.out
 	./umma_tput.out
 
 prof: umma_tput.out
-	sudo ncu --clock-control none --metrics sm__sass_inst_executed_op_utcmma.sum.per_cycle_elapsed,sm__sass_inst_executed_op_utcmma.sum.pct_of_peak_sustained_active,sm__sass_inst_executed_op_utcmma.sum.pct_of_peak_sustained_elapsed ./umma_tput.out
+	$(NCU_PREFIX) $(NCU) --clock-control none --metrics sm__sass_inst_executed_op_utcmma.sum.per_cycle_elapsed,sm__sass_inst_executed_op_utcmma.sum.pct_of_peak_sustained_active,sm__sass_inst_executed_op_utcmma.sum.pct_of_peak_sustained_elapsed ./umma_tput.out
 
 clean:
 	rm -f *.out *.ptx
