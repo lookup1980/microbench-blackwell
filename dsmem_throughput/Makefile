@@ -1,4 +1,8 @@
-NVCCFLAGS := -std=c++17 -gencode=arch=compute_100,code=\"sm_100,compute_100\" -Xptxas=-v
+NVCC ?= nvcc
+CUDA_GENCODE ?= -arch=native
+NVCCFLAGS := -std=c++17 $(CUDA_GENCODE) -Xptxas=-v
+NCU ?= $(shell which ncu)
+NCU_PREFIX ?=
 
 # Config (override via: make CLUSTER_SIZE=8 THREADS_PER_CTA=1024 LOAD_T=float4 ACCESS_MODE=local STRIDE=1)
 CLUSTER_SIZE ?= 8
@@ -22,11 +26,11 @@ DSMEM_DEFINE = -DCLUSTER_SIZE=$(CLUSTER_SIZE) -DTHREADS_PER_CTA=$(THREADS_PER_CT
 
 all: dsmem_tput.out
 
-dsmem_tput.out: dsmem_tput_cpasync.cu common.h
-	nvcc $(NVCCFLAGS) $(DSMEM_DEFINE) -o $@ $<
+dsmem_tput.out: dsmem_tput.cu common.h
+	$(NVCC) $(NVCCFLAGS) $(DSMEM_DEFINE) -o $@ $<
 
 bench: dsmem_tput.out
-	sudo $$(which ncu) --clock-control none --metrics sm__sass_data_bytes_mem_shared_op_ld.avg.per_second,sm__cycles_elapsed.avg ./dsmem_tput.out
+	$(NCU_PREFIX) $(NCU) --clock-control none --metrics sm__sass_data_bytes_mem_shared_op_ld.avg.per_second,sm__cycles_elapsed.avg ./dsmem_tput.out
 
 clean:
 	rm -f *.ptx *.out

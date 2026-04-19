@@ -6,8 +6,6 @@
 
 namespace cg = cooperative_groups;
 
-constexpr int32_t NUM_SMS = 148;                              // B200 has 148 SMs
-constexpr int32_t L2_SIZE = 132644864;                        // B200 L2 cache is 126.5 MiB
 constexpr size_t MAX_DATA_VOLUME = 2LL * 1024 * 1024 * 1024;  // 2 GB
 
 #define CUDA_CHECK(call)                                                         \
@@ -33,6 +31,21 @@ constexpr size_t MAX_DATA_VOLUME = 2LL * 1024 * 1024 * 1024;  // 2 GB
 
 constexpr size_t alignDataVolume(size_t factor) {
     return (MAX_DATA_VOLUME / factor) * factor;
+}
+
+inline int get_device_attribute(cudaDeviceAttr attr, const char* name) {
+    int value = 0;
+    cudaError_t err = cudaDeviceGetAttribute(&value, attr, 0);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "CUDA error at %s:%d: %s\n",
+                __FILE__, __LINE__, cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+    if (value <= 0) {
+        fprintf(stderr, "Invalid %s reported by device: %d\n", name, value);
+        exit(EXIT_FAILURE);
+    }
+    return value;
 }
 
 enum class DsmemAccessMode : int {

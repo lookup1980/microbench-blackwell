@@ -18,7 +18,6 @@
 #endif
 
 #define N_ITERS 10000
-#define SMEM_SIZE 232448  // Greater than 24 KiB to force 1 CTA per SM
 
 constexpr uint32_t LOAD_SIZE = sizeof(LOAD_T);
 constexpr auto ACCESS_MODE_ENUM = static_cast<DsmemAccessMode>(ACCESS_MODE);
@@ -47,9 +46,9 @@ __device__ __forceinline__ int32_t swizzle_idx(int32_t idx) {
 }
 
 __global__ __cluster_dims__(CLUSTER_SIZE, 1, 1)
-void dsmemThroughputKernel(float *data) {
+void dsmemThroughputKernel(float *data, size_t smem_size_bytes) {
     extern __shared__ LOAD_T buffer[];
-    const size_t N_buffer = (SMEM_SIZE - (4*blockDim.x*LOAD_SIZE)) / LOAD_SIZE;
+    const size_t N_buffer = (smem_size_bytes - (4 * blockDim.x * LOAD_SIZE)) / LOAD_SIZE;
     cg::cluster_group cluster = cg::this_cluster();
 
     for (int32_t i = threadIdx.x; i < N_buffer; i += blockDim.x) {
@@ -86,8 +85,12 @@ void dsmemThroughputKernel(float *data) {
 }
 
 void benchDsmemThroughput() {
+    int32_t max_smem = get_device_attribute(
+        cudaDevAttrMaxSharedMemoryPerBlockOptin, "max dynamic shared memory"
+    );
+    size_t smem_size = static_cast<size_t>(max_smem / 128) * 128;
     int32_t num_ctas = CLUSTER_SIZE;
-    size_t data_size = num_ctas * SMEM_SIZE;
+    size_t data_size = num_ctas * smem_size;
     size_t N = data_size / sizeof(float);
     float *data, *d_data;
 
@@ -96,9 +99,9 @@ void benchDsmemThroughput() {
     for (size_t i = 0; i < N; i++) {
         data[i] = rand();
     }
-    cudaMalloc(&d_data, data_size);
-    cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMalloc(&d_data, data_size));
+    CUDA_CHECK(cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     cudaLaunchAttribute attribute[1];
     attribute[0].id = cudaLaunchAttributeClusterDimension;
@@ -109,16 +112,18 @@ void benchDsmemThroughput() {
     cudaLaunchConfig_t config = {0};
     config.gridDim = num_ctas;
     config.blockDim = THREADS_PER_CTA;
-    config.dynamicSmemBytes = (SMEM_SIZE / 128) * 128;
+    config.dynamicSmemBytes = smem_size;
     config.attrs = attribute;
     config.numAttrs = 1;
 
-    cudaFuncSetAttribute(dsmemThroughputKernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_SIZE);
-    CUDA_CHECK(cudaLaunchKernelEx(&config, dsmemThroughputKernel, d_data));
+    CUDA_CHECK(cudaFuncSetAttribute(
+        dsmemThroughputKernel, cudaFuncAttributeMaxDynamicSharedMemorySize, max_smem
+    ));
+    CUDA_CHECK(cudaLaunchKernelEx(&config, dsmemThroughputKernel, d_data, smem_size));
     CUDA_CHECK_LAST();
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    cudaFree(d_data);
+    CUDA_CHECK(cudaFree(d_data));
     free(data);
 }
 
