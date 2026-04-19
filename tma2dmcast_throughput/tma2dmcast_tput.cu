@@ -7,8 +7,6 @@
 
 namespace cg = cooperative_groups;
 
-constexpr int32_t NUM_SMS = 148;                              // B200 has 148 SMs
-constexpr int32_t L2_SIZE = 132644864;                        // B200 L2 cache is 126.5 MiB
 constexpr size_t MAX_DATA_VOLUME = 2LL * 1024 * 1024 * 1024;  // 2 GB
 
 constexpr size_t alignDataVolume(size_t factor) {
@@ -83,16 +81,21 @@ constexpr size_t kBarriersBytes = kNumWarps * sizeof(uint64_t);
 constexpr size_t kBarriersOffset = (kTotalBufferBytes + 7) & ~size_t(7);
 constexpr size_t kDynamicSmemBytes = kBarriersOffset + kBarriersBytes;
 
-// B200 max dynamic smem = 227 KiB = 232448 bytes
-constexpr size_t kMaxDynamicSmem = 227 * 1024;
-static_assert(kDynamicSmemBytes <= kMaxDynamicSmem,
-    "Tile configuration exceeds B200 max dynamic shared memory (227 KiB)");
-
 // TMA box_size constraints (SWIZZLE_NONE, float32)
 static_assert(kSmemWidth <= 128,
     "SMEM_WIDTH must be <= 128 for float32 with CU_TENSOR_MAP_SWIZZLE_NONE");
 static_assert(kSmemHeight <= 256,
     "SMEM_HEIGHT must be <= 256 (TMA boxDim limit)");
+
+#define CUDA_CHECK(expr)                                                     \
+    do {                                                                     \
+        cudaError_t status__ = (expr);                                       \
+        if (status__ != cudaSuccess) {                                       \
+            fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,    \
+                    cudaGetErrorString(status__));                           \
+            return 1;                                                        \
+        }                                                                    \
+    } while (0)
 
 //
 // Inline PTX helper functions
@@ -263,10 +266,25 @@ void bulkAsyncCopyTensor2DKernel(const __grid_constant__ CUtensorMap tensor_map,
     }
 }
 
+int get_device_attribute(cudaDeviceAttr attr, const char* name) {
+    int value = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&value, attr, 0));
+    if (value <= 0) {
+        fprintf(stderr, "Invalid %s reported by device: %d\n", name, value);
+        std::exit(1);
+    }
+    return value;
+}
+
 
 int main() {
     constexpr int32_t kCtasPerSm = 1;
-    int32_t num_blks = (NUM_SMS * kCtasPerSm / kClusterSize) * kClusterSize;
+    int32_t num_sms = get_device_attribute(cudaDevAttrMultiProcessorCount, "SM count");
+    int32_t l2_size = get_device_attribute(cudaDevAttrL2CacheSize, "L2 size");
+    int32_t max_smem = get_device_attribute(
+        cudaDevAttrMaxSharedMemoryPerBlockOptin, "max dynamic shared memory"
+    );
+    int32_t num_blks = (num_sms * kCtasPerSm / kClusterSize) * kClusterSize;
 
     // For mode 3, round down to multiple of kSharingGroupSize
     if constexpr (kMulticastMode == 3) {
@@ -306,6 +324,8 @@ int main() {
     printf("Config: CLUSTER=%d SHARING_GROUP=%d WIDTH=%d HEIGHT=%d MODE=%d (%s)\n",
            kClusterSize, kSharingGroupSize, kSmemWidth, kSmemHeight,
            kMulticastMode, mode_names[kMulticastMode]);
+    printf("  num_sms=%d l2_size=%.2f MiB max_smem=%.1f KiB\n",
+           num_sms, l2_size / (1024.0 * 1024.0), max_smem / 1024.0);
     printf("  Tile: %zu bytes/load, bif: %zu KiB, smem: %zu bytes, data: %.2f MiB, gmem: %lux%lu\n",
            kTileBytes, (kNumWarps * kTileBytes) / 1024,
            kDynamicSmemBytes,
@@ -322,9 +342,9 @@ int main() {
     }
 
     float *d_data;
-    cudaMalloc(&d_data, data_size);
-    cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMalloc(&d_data, data_size));
+    CUDA_CHECK(cudaMemcpy(d_data, data, data_size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     CUtensorMap tensor_map{};
     constexpr uint32_t rank = 2;
@@ -351,24 +371,31 @@ int main() {
 
     // Flush L2 cache
     void *flush_arr;
-    cudaMalloc(&flush_arr, L2_SIZE);
-    cudaMemset(flush_arr, 0xA5, L2_SIZE);
-    cudaDeviceSynchronize();
-    cudaFree(flush_arr);
+    CUDA_CHECK(cudaMalloc(&flush_arr, l2_size));
+    CUDA_CHECK(cudaMemset(flush_arr, 0xA5, l2_size));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaFree(flush_arr));
 
     // Opt in to dynamic shared memory > 48 KiB
     auto kernel_fn = bulkAsyncCopyTensor2DKernel<kMulticastMode>;
+
+    if (kDynamicSmemBytes > static_cast<size_t>(max_smem)) {
+        fprintf(stderr,
+                "Requested dynamic shared memory (%zu bytes) exceeds device limit (%d bytes)\n",
+                kDynamicSmemBytes, max_smem);
+        return 1;
+    }
 
     // Pin smem allocation to max so the HW carveout is constant (228 KiB)
     // across all tile sizes.  Even though the kernel has no explicit L1
     // loads, the TMA engine lives inside L1TEX and its internal request
     // tracking may be affected by the SRAM partition.  Pinning eliminates
     // carveout-transition artifacts between the 100 and 132 KiB steps.
-    cudaFuncSetAttribute(
+    CUDA_CHECK(cudaFuncSetAttribute(
         kernel_fn,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
-        kMaxDynamicSmem
-    );
+        max_smem
+    ));
 
     // Launch
     cudaLaunchAttribute attribute[1];
@@ -380,7 +407,7 @@ int main() {
     cudaLaunchConfig_t config = {0};
     config.gridDim = num_blks;
     config.blockDim = kThreadsPerCta;
-    config.dynamicSmemBytes = kMaxDynamicSmem;
+    config.dynamicSmemBytes = max_smem;
     config.attrs = attribute;
     config.numAttrs = 1;
 
@@ -395,7 +422,7 @@ int main() {
         return 1;
     }
 
-    cudaFree(d_data);
+    CUDA_CHECK(cudaFree(d_data));
     free(data);
     return 0;
 }
