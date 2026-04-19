@@ -14,7 +14,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <vector>
-#include <utility>
 
 #include "cute/tensor.hpp"
 
@@ -49,7 +48,6 @@ using namespace cute;
 #endif
 
 // ---- Constants ----
-static constexpr int NUM_SMS = 148;  // B200
 static constexpr int K_DIM = 131072; // 128K — vocab-sized K to isolate mainloop steady state
 static constexpr int WARMUP_ITERS = 1;
 static constexpr int BENCH_ITERS = 20;
@@ -72,29 +70,6 @@ using ElementD = cutlass::bfloat16_t;  // Output always BF16
 template <class Element>
 void initialize_block(cutlass::DeviceAllocation<Element>& block) {
   cudaMemset(block.get(), 0, block.size() * sizeof(Element));
-}
-
-// ---- Pick best factorization of NUM_SMS into (m_tiles, n_tiles) ----
-// Picks the pair that makes M and N most square.
-static std::pair<int,int> pick_factorization(int tile_m, int tile_n) {
-  std::vector<std::pair<int,int>> factors;
-  for (int i = 1; i <= NUM_SMS; ++i) {
-    if (NUM_SMS % i == 0) {
-      factors.push_back({i, NUM_SMS / i});
-    }
-  }
-  double best_ratio = 1e18;
-  std::pair<int,int> best = {1, NUM_SMS};
-  for (auto [mt, nt] : factors) {
-    int M = mt * tile_m;
-    int N = nt * tile_n;
-    double ratio = (M > N) ? double(M) / N : double(N) / M;
-    if (ratio < best_ratio) {
-      best_ratio = ratio;
-      best = {mt, nt};
-    }
-  }
-  return best;
 }
 
 // ---- GEMM type construction ----

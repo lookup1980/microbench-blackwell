@@ -1,7 +1,9 @@
-ARCH ?= sm_100a
+NVCC ?= nvcc
+CUDA_GENCODE ?= -arch=native
+NVCCFLAGS := $(CUDA_GENCODE) -O2 -std=c++17
 
 gpc_query: gpc_query.cu
-	nvcc -arch=$(ARCH) -O2 -std=c++17 -o $@ $<
+	$(NVCC) $(NVCCFLAGS) -o $@ $<
 
 clean:
 	rm -f gpc_query
