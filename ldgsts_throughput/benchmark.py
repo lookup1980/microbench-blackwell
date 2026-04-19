@@ -10,6 +10,7 @@ import csv
 import sys
 import os
 import argparse
+import shlex
 
 # Load types: name -> size in bytes
 LOAD_TYPES = {
@@ -55,6 +56,13 @@ def find_ncu():
     return None
 
 
+def get_ncu_command(ncu_path):
+    prefix = os.environ.get("NCU_PREFIX", "").strip()
+    cmd = shlex.split(prefix) if prefix else []
+    cmd.append(ncu_path)
+    return cmd
+
+
 def parse_ncu_csv(output):
     """Parse ncu --csv output and return dict of metric name -> value."""
     metrics = {}
@@ -89,7 +97,7 @@ def run_benchmark(ctas_per_sm, num_stages, threads_per_block, load_t, ncu_path, 
         f"LOAD_T={load_t}",
     ]
     ncu_cmd = [
-        "sudo", ncu_path,
+        *get_ncu_command(ncu_path),
         "--clock-control", "none",
         "--csv",
         "--metrics", ",".join(NCU_METRICS),
@@ -200,7 +208,7 @@ def main():
                         csv_file.flush()
                         result_count += 1
                         bw_gbps = result['DRAMBandwidthBps'] / 1e9
-                        ipc = result['LDGSTSPerCycle']
+                        ipc = result['LDGSTSWarpPerCycle']
                         print(f"[{run_idx}/{total_runs}] CTAs={ctas:2d}, stages={stages}, "
                               f"threads={threads:4d}, load={load_t:6s}: "
                               f"{bw_gbps:.2f} GB/s, {ipc:.4f} LDGSTS/cyc", file=sys.stderr)
