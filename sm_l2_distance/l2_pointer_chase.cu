@@ -21,10 +21,6 @@ namespace cg = cooperative_groups;
     } \
 } while(0)
 
-#ifndef NUM_SMS
-#define NUM_SMS 148
-#endif
-
 #define LINE_SIZE 128
 
 static __device__ __forceinline__ uint32_t get_smid() {
@@ -237,31 +233,31 @@ int main(int argc, char** argv) {
         }
     }
 
-    int sm_spacing = num_links / NUM_SMS;
+    int sm_spacing = num_links / num_sms;
     fprintf(stderr, "  SM spacing = %d links (%d KB)\n",
             sm_spacing, sm_spacing * LINE_SIZE / 1024);
 
     const char** d_starts;
-    CHK(cudaMalloc(&d_starts, NUM_SMS * sizeof(const char*)));
+    CHK(cudaMalloc(&d_starts, num_sms * sizeof(const char*)));
 
-    size_t results_size = (size_t)NUM_SMS * num_hops * sizeof(uint32_t);
+    size_t results_size = (size_t)num_sms * num_hops * sizeof(uint32_t);
     fprintf(stderr, "  results buf = %.1f MB\n", results_size / (1024.0 * 1024.0));
 
     uint32_t* d_hop_lats;
     CHK(cudaMalloc(&d_hop_lats, results_size));
 
     uint32_t* d_sm_ids;
-    CHK(cudaMalloc(&d_sm_ids, NUM_SMS * sizeof(uint32_t)));
+    CHK(cudaMalloc(&d_sm_ids, num_sms * sizeof(uint32_t)));
 
-    double* accum = new double[(size_t)NUM_SMS * num_links]();
+    double* accum = new double[(size_t)num_sms * num_links]();
 
-    uint32_t h_sm_ids[NUM_SMS];
-    uint32_t* h_hop_lats = new uint32_t[(size_t)NUM_SMS * num_hops];
-    std::vector<const char*> h_starts(NUM_SMS);
-    std::vector<std::vector<size_t>> hop_addrs(NUM_SMS);
+    std::vector<uint32_t> h_sm_ids(num_sms);
+    uint32_t* h_hop_lats = new uint32_t[(size_t)num_sms * num_hops];
+    std::vector<const char*> h_starts(num_sms);
+    std::vector<std::vector<size_t>> hop_addrs(num_sms);
 
-    std::vector<int> start_perm(NUM_SMS);
-    for (int i = 0; i < NUM_SMS; i++) start_perm[i] = i;
+    std::vector<int> start_perm(num_sms);
+    for (int i = 0; i < num_sms; i++) start_perm[i] = i;
 
     for (int pass = 0; pass < num_passes; pass++) {
         fprintf(stderr, "\n--- Pass %d/%d ---\n", pass + 1, num_passes);
@@ -269,7 +265,7 @@ int main(int argc, char** argv) {
         if (pass > 0)
             std::shuffle(start_perm.begin(), start_perm.end(), rng);
 
-        for (int i = 0; i < NUM_SMS; i++) {
+        for (int i = 0; i < num_sms; i++) {
             int start_pos = (start_perm[i] * sm_spacing) % num_links;
             int link = chain_order[start_pos];
             h_starts[i] = d_data + link * LINE_SIZE;
@@ -284,26 +280,26 @@ int main(int argc, char** argv) {
         }
 
         CHK(cudaMemcpy(d_starts, h_starts.data(),
-                       NUM_SMS * sizeof(const char*), cudaMemcpyHostToDevice));
+                       num_sms * sizeof(const char*), cudaMemcpyHostToDevice));
 
         flush_l2(dev);
 
         void* args[] = { &d_starts, &d_hop_lats, &d_sm_ids, &num_hops };
         CHK(cudaLaunchCooperativeKernel(
-            (void*)chase_kernel, dim3(NUM_SMS), dim3(1), args));
+            (void*)chase_kernel, dim3(num_sms), dim3(1), args));
         CHK(cudaDeviceSynchronize());
 
-        CHK(cudaMemcpy(h_sm_ids, d_sm_ids, NUM_SMS * sizeof(uint32_t),
+        CHK(cudaMemcpy(h_sm_ids.data(), d_sm_ids, num_sms * sizeof(uint32_t),
                        cudaMemcpyDeviceToHost));
         CHK(cudaMemcpy(h_hop_lats, d_hop_lats, results_size,
                        cudaMemcpyDeviceToHost));
 
         if (pass == 0) {
-            std::set<uint32_t> unique(h_sm_ids, h_sm_ids + NUM_SMS);
-            fprintf(stderr, "  Unique SMs: %zu / %d\n", unique.size(), NUM_SMS);
+            std::set<uint32_t> unique(h_sm_ids.begin(), h_sm_ids.end());
+            fprintf(stderr, "  Unique SMs: %zu / %d\n", unique.size(), num_sms);
         }
 
-        for (int b = 0; b < NUM_SMS; b++) {
+        for (int b = 0; b < num_sms; b++) {
             for (int hop = 0; hop < num_hops; hop++) {
                 int link_idx = hop_addrs[b][hop] / LINE_SIZE;
                 accum[(size_t)b * num_links + link_idx] += h_hop_lats[b * num_hops + hop];
@@ -314,12 +310,12 @@ int main(int argc, char** argv) {
     delete[] h_buf;
 
     double inv_passes = 1.0 / num_passes;
-    for (size_t i = 0; i < (size_t)NUM_SMS * num_links; i++)
+    for (size_t i = 0; i < (size_t)num_sms * num_links; i++)
         accum[i] *= inv_passes;
 
     fprintf(stderr, "\n--- Computing results ---\n");
-    std::vector<double> sm_mean(NUM_SMS);
-    for (int i = 0; i < NUM_SMS; i++) {
+    std::vector<double> sm_mean(num_sms);
+    for (int i = 0; i < num_sms; i++) {
         double sum = 0;
         for (int j = 0; j < num_links; j++)
             sum += accum[(size_t)i * num_links + j];
@@ -328,7 +324,7 @@ int main(int argc, char** argv) {
 
     FILE* f_sm = fopen("results/sm_info.csv", "w");
     fprintf(f_sm, "sm,gpc,mean_latency\n");
-    for (int b = 0; b < NUM_SMS; b++) {
+    for (int b = 0; b < num_sms; b++) {
         uint32_t smid = h_sm_ids[b];
         int gpc = sm_to_gpc.count(smid) ? sm_to_gpc[smid] : -1;
         fprintf(f_sm, "%u,%d,%.1f\n", smid, gpc, sm_mean[b]);
@@ -356,10 +352,10 @@ int main(int argc, char** argv) {
     }
 
     printf("sm_a,sm_b,mean_abs_diff,gpc_a,gpc_b\n");
-    for (int a = 0; a < NUM_SMS; a++) {
+    for (int a = 0; a < num_sms; a++) {
         uint32_t sm_a = h_sm_ids[a];
         int gpc_a = sm_to_gpc.count(sm_a) ? sm_to_gpc[sm_a] : -1;
-        for (int b = 0; b < NUM_SMS; b++) {
+        for (int b = 0; b < num_sms; b++) {
             uint32_t sm_b = h_sm_ids[b];
             int gpc_b = sm_to_gpc.count(sm_b) ? sm_to_gpc[sm_b] : -1;
 

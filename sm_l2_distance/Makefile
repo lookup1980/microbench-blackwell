@@ -1,7 +1,6 @@
-NVCC       := nvcc
-ARCH       := -gencode=arch=compute_100a,code=\"sm_100a,compute_100a\"
+NVCC       ?= nvcc
+CUDA_GENCODE ?= -arch=native
 CXXFLAGS   := -O2 -std=c++17
-NUM_SMS    ?= 148
 
 TARGET     := l2_pointer_chase
 SRC        := l2_pointer_chase.cu
@@ -11,7 +10,7 @@ SRC        := l2_pointer_chase.cu
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(NVCC) $(CXXFLAGS) $(ARCH) -DNUM_SMS=$(NUM_SMS) -o $@ $<
+	$(NVCC) $(CXXFLAGS) $(CUDA_GENCODE) -o $@ $<
 
 run: $(TARGET)
 	mkdir -p results
