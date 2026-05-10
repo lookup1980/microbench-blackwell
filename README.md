@@ -21,6 +21,9 @@ For the current `RTX 5090` support matrix, setup, exact commands, and known bloc
 | `tma2d_latency/` | TMA 2D latency |
 | `umma_throughput/` | UMMA tensor-core throughput |
 | `umma_latency/` | UMMA tensor-core latency |
+| `tcgen05_sparse_mma/` | Sparse vs dense Blackwell tcgen05 tensor-core throughput/latency |
+| `sm120_mma_workload_sweep/` | RTX 5090 / sm_120 same-workload sparse vs dense tensor-core throughput/latency |
+| `sm120_mma_sparse/` | RTX 5090 / sm_120 sparse MMA instruction diagnostic |
 | `elementwise_throughput/` | fp32 HBM-resident activation/elementwise throughput |
 
 <img width="1456" height="1231" alt="image" src="https://github.com/user-attachments/assets/104eabab-7c77-403f-b669-3402cc7a4b86" />

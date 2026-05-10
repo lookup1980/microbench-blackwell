@@ -1,0 +1,5 @@
+Mode,SparseVariant,Extreme,PairID,Family,M,N,K,SparseOverDenseWorkloadSpeedup,SparseOverDenseWorkloadCycleRatio,DenseCyclesPerWorkload,SparseCyclesPerWorkload
+throughput,ordered,best,throughput:fp8:e4m3xe4m3:m512n512k2048:ordered:nosat,fp8,512,512,2048,2.324557,0.430189,1220018.250000,524839.000000
+throughput,ordered,worst,throughput:int4:u4xu4:m256n256k2048:ordered:nosat,int4,256,256,2048,0.362528,2.758397,2902937.500000,8007454.000000
+latency,ordered,best,latency:fp8:e4m3xe5m2:m512n512k2048:ordered:nosat,fp8,512,512,2048,2.579650,0.387649,10831250.000000,4198723.000000
+latency,ordered,worst,latency:int4:u4xu4:m32n32k256:ordered:sat,int4,32,32,256,0.344716,2.900960,4793.289062,13905.140625

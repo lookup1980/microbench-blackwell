@@ -1,0 +1,178 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.72in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage[T1]{fontenc}
+
+\setlength{\emergencystretch}{2em}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{SM120 Sparse MMA Instruction Diagnostic}
+\author{}
+\date{Measurement date: 2026-05-09}
+
+\begin{document}
+\maketitle
+
+This directory is now a diagnostic appendix. Do not use this report to state
+the sparse-vs-dense speedup for a matrix workload.
+
+The primary performance report is in the sibling
+\texttt{sm120\_mma\_workload\_sweep} directory. Use its Markdown and PDF reports
+for speedup conclusions. That report compares sparse and dense at the same
+\texttt{A[M,K] x B[K,N]} workload.
+
+\section{Why This Is Diagnostic Only}
+
+The original benchmark in this directory times individual warp-level MMA packet
+forms. It is useful for checking whether RTX 5090 / \texttt{sm\_120} accepts and
+runs a PTX instruction spelling, but its aggregate medians are not a clean
+workload performance metric.
+
+The confusing case was F16/F16 ordered sparse:
+
+\begin{itemize}
+\item \texttt{m16n8k16} sparse compared with one dense \texttt{m16n8k16} packet
+is near parity.
+\item \texttt{m16n8k32} sparse compared with two dense \texttt{m16n8k16}
+packets is near 2x.
+\item Taking a median across those two packet classes gives about 1.5x, but
+that is not the speedup of a same-size matrix workload.
+\end{itemize}
+
+The same-workload benchmark fixes this by choosing one matrix shape, giving
+sparse and dense the same \texttt{M}, \texttt{N}, and \texttt{K}, and timing the
+tensor-core work for that equal workload.
+
+\section{Current Same-Workload Result To Quote}
+
+From \texttt{sm120\_mma\_workload\_sweep/REPORT.md}:
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Mode & Overall speedup & Overall cycle ratio \\
+\midrule
+Throughput & 1.946543x & 0.513732x \\
+Latency & 1.962671x & 0.509509x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For F16 inputs with F16 accumulation:
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Mode & F16/F16 speedup & F16/F16 cycle ratio \\
+\midrule
+Throughput & 2.039617x & 0.490292x \\
+Latency & 2.037302x & 0.490849x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{What This Diagnostic Still Covers}
+
+This diagnostic remains useful for:
+
+\begin{itemize}
+\item verifying that baseline \texttt{sm\_120} accepts warp-level
+\texttt{mma.sp} and \texttt{mma.sp::ordered\_metadata} forms;
+\item identifying that \texttt{tcgen05.*} is not accepted for
+\texttt{.target sm\_120};
+\item checking compiler advisories for plain \texttt{.sp};
+\item checking whether a sparse PTX spelling runs without launch/runtime
+failure;
+\item preserving exact sparse and dense PTX spellings in
+\texttt{results/sm120\_mma\_instruction\_pairs.csv}.
+\end{itemize}
+
+\section{Coverage}
+
+The diagnostic sweep completed 176 sparse/dense packet rows with no build or
+runtime failures on an NVIDIA GeForce RTX 5090.
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{L{0.16\linewidth}L{0.25\linewidth}Y L{0.14\linewidth}}
+\toprule
+Family & Sparse packet shapes & Input formats & Accum. \\
+\midrule
+F16/F32 & \texttt{m16n8k16}, \texttt{m16n8k32} & \texttt{f16 x f16} & \texttt{f32} \\
+F16/F16 & \texttt{m16n8k16}, \texttt{m16n8k32} & \texttt{f16 x f16} & \texttt{f16} \\
+BF16 & \texttt{m16n8k16}, \texttt{m16n8k32} & \texttt{bf16 x bf16} & \texttt{f32} \\
+TF32 & \texttt{m16n8k8}, \texttt{m16n8k16} & \texttt{tf32 x tf32} & \texttt{f32} \\
+FP8 & \texttt{m16n8k64} & \texttt{e4m3/e5m2 x e4m3/e5m2} & \texttt{f32} \\
+INT8 & \texttt{m16n8k32}, \texttt{m16n8k64} & \texttt{u8/s8 x u8/s8} & \texttt{s32} \\
+INT4 & \texttt{m16n8k64}, \texttt{m16n8k128} & \texttt{u4/s4 x u4/s4} & \texttt{s32} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+For INT8 and INT4, both normal and \texttt{.satfinite} accumulation are
+covered. For sparse instructions, both plain \texttt{.sp} and ordered metadata
+are covered.
+
+\section{Diagnostic Findings}
+
+\begin{itemize}
+\item The useful sparse spelling on RTX 5090 is
+\texttt{mma.sp::ordered\_metadata.sync.aligned}.
+\item Plain \texttt{mma.sp.sync.aligned} is not a good performance path for this
+machine. \texttt{ptxas} emits a performance advisory, and the measured packet
+path is poor for F16/F16 and INT8.
+\item INT4 sparse packet forms are slower than their dense peers in both this
+diagnostic and the same-workload sweep.
+\item \texttt{tcgen05.*} is not supported by \texttt{ptxas} for
+\texttt{.target sm\_120}; those forms remain outside the RTX 5090 baseline path.
+\end{itemize}
+
+\section{Artifacts}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{L{0.40\linewidth}Y}
+\toprule
+Path & Description \\
+\midrule
+\texttt{sm120\_mma\_sparse.cu} & Instruction-packet CUDA diagnostic \\
+\texttt{benchmark.py} & Builds/runs sparse and dense packet pairs \\
+\texttt{summarize\_results.py} & Generates diagnostic CSV summaries \\
+\texttt{results/sm120\_mma\_full.csv} & Raw 176-row diagnostic sweep \\
+\texttt{results/sm120\_mma\_instruction\_pairs.csv} & Exact sparse/dense PTX spelling pairs \\
+\texttt{results/sm120\_mma\_overall.csv} & Packet-level aggregate summary \\
+\texttt{results/sm120\_mma\_summary\_by\_family.csv} & Packet-level family summary \\
+\texttt{results/sm120\_mma\_extremes.csv} & Packet-level best/worst rows \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Reproduction}
+
+\begin{verbatim}
+cd sm120_mma_sparse
+python3 benchmark.py --mode both --preset full \
+    --sparse-variant both --output results/sm120_mma_full.csv --overwrite
+python3 summarize_results.py results/sm120_mma_full.csv --out-dir results
+make report
+\end{verbatim}
+
+Use the same-workload report for performance conclusions:
+
+\begin{verbatim}
+cd ../sm120_mma_workload_sweep
+python3 workload_benchmark.py \
+    --mode both --format-preset full --size-preset full \
+    --sparse-variant ordered --target-packets-per-warp 4096 \
+    --warmup-launches 3 \
+    --output results/sm120_mma_workload_sweep.csv --overwrite
+python3 summarize_workload.py results/sm120_mma_workload_sweep.csv --out-dir results
+make report
+\end{verbatim}
+
+\end{document}

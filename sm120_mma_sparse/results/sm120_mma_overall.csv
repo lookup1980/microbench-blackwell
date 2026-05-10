@@ -1,0 +1,5 @@
+Mode,SparseVariant,Rows,MedianSparseOverDenseOpsPerCycle,MinSparseOverDenseOpsPerCycle,MaxSparseOverDenseOpsPerCycle,MedianSparseOverDenseCyclesPerPacket
+throughput,ordered,44,1.000230,0.206348,2.038542,0.999770
+throughput,sp,44,0.302778,0.011386,1.999846,3.512917
+latency,ordered,44,1.000071,0.280493,2.038030,0.999928
+latency,sp,44,0.391308,0.171858,2.000063,2.555519

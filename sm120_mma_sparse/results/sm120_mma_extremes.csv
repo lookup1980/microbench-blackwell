@@ -1,0 +1,9 @@
+Mode,SparseVariant,Extreme,PairID,SparseOverDenseOpsPerCycle,SparseOverDenseCyclesPerPacket,DenseOpsPerCycle,SparseOpsPerCycle,DenseCyclesPerPacket,SparseCyclesPerPacket
+throughput,ordered,best,throughput:f16f16:f16xf16:k32:ordered:nosat,2.038542,0.490546,1004.218000,2047.141000,8.157593,4.001678
+throughput,ordered,worst,throughput:int4:u4xu4:k64:ordered:sat,0.206348,4.846268,90.890000,18.755000,180.261566,873.595856
+throughput,sp,best,throughput:bf16:bf16xbf16:k32:sp:nosat,1.999846,0.500039,511.540000,1023.001000,16.014374,8.007812
+throughput,sp,worst,throughput:int8:s8xu8:k32:sp:nosat,0.011386,87.825487,1926.699000,21.938000,4.251831,373.419128
+latency,ordered,best,latency:f16f16:f16xf16:k32:ordered:nosat,2.038030,0.490668,125.506000,255.785000,65.271973,32.026855
+latency,ordered,worst,latency:int4:u4xu4:k64:ordered:nosat,0.280493,3.565154,92.348000,25.903000,177.416504,632.517090
+latency,sp,best,latency:tf32:tf32xtf32:k16:sp:nosat,2.000063,0.499989,31.968000,63.938000,128.127930,64.062500
+latency,sp,worst,latency:int8:u8xu8:k32:sp:sat,0.171858,5.818728,240.775000,41.379000,34.023438,197.973145

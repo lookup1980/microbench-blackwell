@@ -1,0 +1,267 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.72in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage[T1]{fontenc}
+
+\setlength{\emergencystretch}{2em}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{SM120 Same-Workload Sparse MMA Report}
+\author{}
+\date{Measurement date: 2026-05-09}
+
+\begin{document}
+\maketitle
+
+This is the primary RTX 5090 sparse tensor-core report in this repo. It uses
+equal semantic matrix workloads:
+\[
+A[M,K] \times B[K,N] \rightarrow C[M,N].
+\]
+Sparse and dense rows use the same \texttt{M}, \texttt{N}, and \texttt{K}.
+
+\section{Executive Summary}
+
+The full sweep completed 288 same-workload dense/sparse rows with no build or
+runtime failures. The sweep covers F16/F32, F16/F16, BF16, TF32, all FP8
+E4M3/E5M2 input combinations, all INT8 signed/unsigned combinations, and all
+INT4 signed/unsigned combinations. INT8 and INT4 include both normal and
+\texttt{.satfinite} accumulation.
+
+Only the recommended ordered metadata sparse form is used for the performance
+result. In PTX, that is the \texttt{mma.sp::ordered\_metadata} path.
+
+\begin{center}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Mode & Rows & Median speedup & Median cycle ratio \\
+\midrule
+Throughput & 144 & 1.946543x & 0.513732x \\
+Latency & 144 & 1.962671x & 0.509509x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For most non-INT4 formats, ordered sparse is approximately 2x faster than dense
+for the same synthetic matrix workload. INT4 is the exception and is slower than
+dense in this benchmark.
+
+\section{Direct Answer For F16/F16}
+
+For F16 inputs with F16 accumulation, ordered sparse is about 2x faster than
+dense for the same workload:
+
+\begin{center}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Mode & Rows & Median speedup & Median cycle ratio \\
+\midrule
+Throughput & 6 & 2.039617x & 0.490292x \\
+Latency & 6 & 2.037302x & 0.490849x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The cycle ratio near 0.49x means sparse uses about half the measured GPU
+tensor-core cycles of dense for the same \texttt{A[M,K] x B[K,N]} work.
+
+\section{Timing Boundary}
+
+The report counts GPU tensor-core timing only.
+
+\begin{itemize}
+\item Timing uses \texttt{clock64()} inside the CUDA kernel.
+\item Each row reports the median measured warp among \texttt{108 * 8 = 864}
+warps.
+\item The timed region includes only the repeated tensor-core MMA work for the
+synthetic workload.
+\item Python time, compilation time, process launch time, CUDA kernel launch
+time, host synchronization, host-device copies, CSV writing, and report
+generation are excluded.
+\item Each measured row runs warmup kernel launches first. The full result used
+\texttt{WarmupLaunches = 3}; warmup launches are not included in
+\texttt{DenseCycles} or \texttt{SparseCycles}.
+\end{itemize}
+
+This is a tensor-core math benchmark, not a full GEMM benchmark. It does not
+include global-memory loads, shared-memory staging, sparse metadata generation,
+tile iterators, epilogue stores, or numerical validation.
+
+\section{Workload Definition}
+
+Every row decomposes the matrix workload into warp-level \texttt{m16n8k*} MMA
+packets:
+\[
+\mathrm{WorkloadPackets} =
+\frac{M}{16} \times \frac{N}{8} \times \frac{K}{\mathrm{SparseSemanticK}}.
+\]
+
+Sparse and dense use the same matrix shape. Dense emits enough related
+\texttt{mma.sync} work to cover the same semantic K. For example, F16/F16
+ordered sparse uses sparse semantic \texttt{k32}, while dense uses two
+\texttt{k16} \texttt{mma.sync} operations for each same-workload sparse packet.
+
+This is different from the older instruction-packet diagnostic report, which
+mixed one-dense-instruction and two-dense-instruction cases. Those mixed
+instruction medians are not used here.
+
+\section{Matrix Size Sweep}
+
+\begin{center}
+\small
+\begin{tabular}{rrr}
+\toprule
+Scale & M & N \\
+\midrule
+1 & 16 & 16 \\
+2 & 32 & 32 \\
+4 & 64 & 64 \\
+8 & 128 & 128 \\
+16 & 256 & 256 \\
+32 & 512 & 512 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Maximum A/B shapes in the report:
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Family & Max A shape & Max B shape \\
+\midrule
+F16/F32 & \texttt{512 x 1024} & \texttt{1024 x 512} \\
+F16/F16 & \texttt{512 x 1024} & \texttt{1024 x 512} \\
+BF16 & \texttt{512 x 1024} & \texttt{1024 x 512} \\
+TF32 & \texttt{512 x 512} & \texttt{512 x 512} \\
+FP8 & \texttt{512 x 2048} & \texttt{2048 x 512} \\
+INT8 & \texttt{512 x 2048} & \texttt{2048 x 512} \\
+INT4 & \texttt{512 x 4096} & \texttt{4096 x 512} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Throughput By Family}
+
+\begin{center}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Family & Rows & Median & Min & Max & Cycle ratio \\
+\midrule
+F16/F32 & 6 & 1.993370x & 1.942656x & 1.999924x & 0.501664x \\
+F16/F16 & 6 & 2.039617x & 1.607768x & 2.046796x & 0.490292x \\
+BF16 & 6 & 1.992143x & 1.942624x & 1.999932x & 0.501972x \\
+TF32 & 6 & 1.992742x & 1.949431x & 2.001675x & 0.501821x \\
+FP8 & 24 & 1.995070x & 1.940709x & 2.324557x & 0.501236x \\
+INT8 & 48 & 1.989737x & 1.489865x & 2.000026x & 0.502579x \\
+INT4 & 48 & 0.670316x & 0.362528x & 0.969383x & 1.506676x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Latency By Family}
+
+\begin{center}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Family & Rows & Median & Min & Max & Cycle ratio \\
+\midrule
+F16/F32 & 6 & 1.998498x & 1.961920x & 2.001599x & 0.500376x \\
+F16/F16 & 6 & 2.037302x & 1.613801x & 2.047014x & 0.490849x \\
+BF16 & 6 & 1.998654x & 1.961920x & 2.230839x & 0.500336x \\
+TF32 & 6 & 1.999124x & 1.963081x & 2.002195x & 0.500219x \\
+FP8 & 24 & 1.999210x & 1.961895x & 2.579650x & 0.500198x \\
+INT8 & 48 & 1.992542x & 1.608682x & 2.001129x & 0.501871x \\
+INT4 & 48 & 0.613358x & 0.344716x & 0.867011x & 1.650141x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Results By Matrix Size}
+
+\begin{center}
+\small
+\begin{tabular}{rrrr}
+\toprule
+Scale & M=N & Throughput median & Latency median \\
+\midrule
+1 & 16 & 1.523300x & 1.611309x \\
+2 & 32 & 1.894440x & 1.928605x \\
+4 & 64 & 1.970939x & 1.988479x \\
+8 & 128 & 1.989851x & 1.996520x \\
+16 & 256 & 1.998695x & 1.998712x \\
+32 & 512 & 1.999824x & 1.999838x \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The small-size rows include more loop and dependency overhead per unit of work.
+From \texttt{64 x 64} upward, the non-INT4 formats are close to the expected 2x
+same-workload tensor-core result.
+
+\section{Extremes}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{lY r Y r}
+\toprule
+Mode & Best row & Speedup & Worst row & Speedup \\
+\midrule
+Throughput & \texttt{fp8:e4m3xe4m3:m512n512k2048} & 2.324557x & \texttt{int4:u4xu4:m256n256k2048} & 0.362528x \\
+Latency & \texttt{fp8:e4m3xe5m2:m512n512k2048} & 2.579650x & \texttt{int4:u4xu4:m32n32k256:sat} & 0.344716x \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Artifacts}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{L{0.45\linewidth}Y}
+\toprule
+Path & Description \\
+\midrule
+\texttt{sm120\_mma\_workload.cu} & CUDA same-workload tensor-core benchmark with warmup launches \\
+\texttt{workload\_benchmark.py} & Builds separate dense/sparse executables and runs matrix-size sweeps \\
+\texttt{summarize\_workload.py} & Generates aggregate CSV summaries \\
+\texttt{results/sm120\_mma\_workload\_sweep.csv} & Full 288-row raw workload sweep \\
+\texttt{results/sm120\_mma\_workload\_overall.csv} & Overall throughput/latency summary \\
+\texttt{results/sm120\_mma\_workload\_summary\_by\_family.csv} & Per-family summaries \\
+\texttt{results/sm120\_mma\_workload\_summary\_by\_size.csv} & Per-size summaries \\
+\texttt{results/sm120\_mma\_workload\_extremes.csv} & Best/worst rows \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Reproduction}
+
+\begin{verbatim}
+cd sm120_mma_workload_sweep
+python3 workload_benchmark.py \
+    --mode both --format-preset full --size-preset full \
+    --sparse-variant ordered --target-packets-per-warp 4096 \
+    --warmup-launches 3 \
+    --output results/sm120_mma_workload_sweep.csv --overwrite
+python3 summarize_workload.py results/sm120_mma_workload_sweep.csv --out-dir results
+make report
+\end{verbatim}
+
+\section{Validation}
+
+\begin{itemize}
+\item Full run completed 288 rows with no build or runtime failures.
+\item Every measured row used three warmup launches before measurement.
+\item Timing is from GPU-side \texttt{clock64()} inside the measured kernel.
+\item Python scripts compile with \texttt{python3 -m py\_compile}.
+\item TeX report builds to \texttt{REPORT.pdf}.
+\end{itemize}
+
+\end{document}

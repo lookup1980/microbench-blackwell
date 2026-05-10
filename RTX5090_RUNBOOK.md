@@ -36,6 +36,8 @@ These benchmarks were verified end-to-end on the `RTX 5090`:
 - `tma2d_latency`
 - `sm_l2_distance`
 - `tools/gpc_query`
+- `sm120_mma_workload_sweep`
+- `sm120_mma_sparse`
 
 These benchmarks compile and execute, but their throughput collection path is blocked
 on this machine by missing NVIDIA performance-counter permission:
@@ -194,6 +196,53 @@ Instruction 'tcgen05.mma' not supported on .target 'sm_120'
 ```
 
 Treat these as B200-specific until there is an `sm_120`-compatible rewrite.
+
+## SM120 Sparse MMA Same-Workload Sweep
+
+The primary RTX 5090 sparse tensor-core report is
+`sm120_mma_workload_sweep/REPORT.md`. It compares sparse and dense at the same
+synthetic matrix workload `A[M,K] x B[K,N]`, counts GPU-side tensor-core cycles
+only, and excludes CPU time, CUDA launch overhead, synchronization, copies, and
+warmup launches from the reported timing.
+
+```bash
+cd sm120_mma_workload_sweep
+make clean
+python3 workload_benchmark.py \
+    --mode both \
+    --format-preset full \
+    --size-preset full \
+    --sparse-variant ordered \
+    --target-packets-per-warp 4096 \
+    --warmup-launches 3 \
+    --output results/sm120_mma_workload_sweep.csv \
+    --overwrite
+python3 summarize_workload.py results/sm120_mma_workload_sweep.csv --out-dir results
+make report
+```
+
+The current full sweep completed 288 rows with no failures. Overall median
+same-workload speedup was `1.946543x` for throughput mode and `1.962671x` for
+latency mode. For F16 inputs with F16 accumulation, the same-workload result was
+`2.039617x` throughput speedup and `2.037302x` latency speedup.
+
+## SM120 Sparse MMA Instruction Diagnostic
+
+`sm120_mma_sparse/` is retained as an instruction diagnostic only. It verifies
+the RTX 5090-compatible warp-level `mma.sync`, `mma.sp`, and
+`mma.sp::ordered_metadata` spellings instead of `tcgen05.*`, but its aggregate
+instruction-packet medians are not workload speedup numbers.
+
+```bash
+cd sm120_mma_sparse
+make clean
+python3 benchmark.py --mode both --preset smoke \
+    --sparse-variant both --output smoke_sm120_mma.csv --overwrite
+```
+
+Use `--preset full` only when checking exact sparse/dense PTX spellings or
+compiler/runtime support. Use `sm120_mma_workload_sweep/` for performance
+conclusions.
 
 ## Notes
 

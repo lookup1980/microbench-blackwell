@@ -1,0 +1,164 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage[T1]{fontenc}
+
+\title{Sparse Blackwell Tensor Core Microbenchmark Plan and Report}
+\author{microbench-blackwell}
+\date{May 9, 2026}
+
+\begin{document}
+\maketitle
+
+\section{Scope}
+
+This report defines benchmark coverage for sparse Blackwell tensor-core MMA
+instructions and their dense counterparts. The executable benchmark in this
+directory targets the fifth-generation Tensor Core PTX instructions
+\texttt{tcgen05.mma}, \texttt{tcgen05.mma.sp}, \texttt{tcgen05.mma.ws}, and
+\texttt{tcgen05.mma.ws.sp}.
+
+The sparse comparison is instruction-pair based: \texttt{tcgen05.mma.sp} is
+compared with \texttt{tcgen05.mma}, and \texttt{tcgen05.mma.ws.sp} is compared
+with \texttt{tcgen05.mma.ws}. The existing \texttt{umma\_throughput/} and
+\texttt{umma\_latency/} benchmarks already cover a subset of dense
+\texttt{tcgen05.mma} behavior; this directory keeps sparse work isolated while
+using the same throughput and latency measurement model.
+
+Implemented artifacts are \texttt{tcgen05\_sparse\_mma.cu}, the
+\texttt{benchmark.py} sweep driver, a named-format \texttt{Makefile}, and this
+Markdown/TeX/PDF report set.
+
+\section{Instruction Families}
+
+\begin{longtable}{llll}
+\toprule
+Family & Sparse PTX kind & Dense peer & Data formats covered \\
+\midrule
+\endhead
+Standard MMA & \texttt{tf32} & \texttt{tf32} & TF32 \\
+Standard MMA & \texttt{f16} & \texttt{f16} & FP16, BF16 \\
+Standard MMA & \texttt{f8f6f4} & \texttt{f8f6f4} & E4M3, E5M2, E2M3, E3M2, E2M1 \\
+Standard MMA & \texttt{i8} & \texttt{i8} & S8, U8 \\
+Standard MMA, block scaled & \texttt{mxf8f6f4.block\_scale} & same & MX narrow formats \\
+Standard MMA, block scaled & \texttt{mxf4.block\_scale} & same & MXFP4 \\
+Standard MMA, block scaled & \texttt{mxf4nvf4.block\_scale} & same & MXFP4, NVFP4 \\
+Weight-stationary MMA & \texttt{tf32} & \texttt{tf32} & TF32 \\
+Weight-stationary MMA & \texttt{f16} & \texttt{f16} & FP16, BF16 \\
+Weight-stationary MMA & \texttt{f8f6f4} & \texttt{f8f6f4} & E4M3, E5M2, E2M3, E3M2, E2M1 \\
+Weight-stationary MMA & \texttt{i8} & \texttt{i8} & S8, U8 \\
+\bottomrule
+\end{longtable}
+
+\texttt{tcgen05.mma.ws.sp} is CTA-group 1 only. Standard
+\texttt{tcgen05.mma.sp} supports CTA groups 1 and 2. The benchmark driver
+skips unsupported combinations rather than failing late.
+
+\section{Sparse Semantics}
+
+Sparse \texttt{tcgen05.mma.sp} and \texttt{tcgen05.mma.ws.sp} use sparse matrix
+\texttt{A}. The benchmark sets the PTX instruction descriptor sparsity bit and
+stores sparsity metadata in Tensor Memory.
+
+\begin{tabular}{lll}
+\toprule
+Kind & Sparse granularity & Metadata pattern \\
+\midrule
+\texttt{tf32} & 1:2 & repeated \texttt{0b0100} nibbles \\
+\texttt{f16} & 2:4 & repeated \texttt{0b0100} nibbles \\
+\texttt{f8f6f4} & 2:4 & repeated \texttt{0b0100}, selector 0 \\
+\texttt{mxf8f6f4} & 2:4 & repeated \texttt{0b0100}, selector 0 \\
+\texttt{i8} & 2:4 & repeated \texttt{0b0100}, selector 0 \\
+\texttt{mxf4} & 4:8 in pairs & repeated \texttt{0b0100}, selector 0 \\
+\texttt{mxf4nvf4} & 4:8 in pairs & repeated \texttt{0b0100}, selector 0 \\
+\bottomrule
+\end{tabular}
+
+\section{Measurement Method}
+
+Throughput mode issues a burst of \texttt{MMA\_DEPTH} operations in each
+iteration and reports cycles per MMA:
+
+\begin{lstlisting}
+cycles_per_mma = total_clock_cycles / (MMA_DEPTH * NUM_ITERS)
+\end{lstlisting}
+
+Latency mode issues one MMA per sample, commits it to an mbarrier, waits for
+completion, sorts the samples, and reports the median cycle count.
+
+The benchmark reports both raw instruction throughput and dense-equivalent
+operations. Sparse instructions store half of matrix \texttt{A}, but their
+dense-equivalent GEMM shape remains \texttt{M x N x K}. CSV output therefore
+keeps both \texttt{MathOpsPerMMA = 2*M*N*K} and \texttt{StoredAElements}.
+
+\section{Usage}
+
+\begin{lstlisting}[language=bash]
+cd tcgen05_sparse_mma
+make clean
+make MODE=throughput INSTRUCTION=mma KIND=f16 A_TYPE=f16 B_TYPE=f16 \
+     SPARSITY=1 MMA_M=128 MMA_N=64 MMA_K=32 MMA_DEPTH=256 \
+     CTA_GROUP=1 AB_LAYOUT=ss
+./tcgen05_sparse_mma.out
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash]
+python3 benchmark.py --mode throughput --preset smoke --sparsity both \
+    --output sparse_tput.csv --overwrite
+python3 benchmark.py --mode latency --preset smoke --sparsity both \
+    --output sparse_lat.csv --overwrite
+\end{lstlisting}
+
+Build without running, useful on machines that have a CUDA toolchain but not an
+SM100/SM110 GPU:
+
+\begin{lstlisting}[language=bash]
+python3 benchmark.py --mode throughput --preset smoke --sparsity both \
+    --instruction all --ab-layout ss --cta-group 1 --build-only \
+    --output sparse_build_matrix.csv --overwrite
+\end{lstlisting}
+
+The default \texttt{CUDA\_GENCODE} is:
+
+\begin{lstlisting}
+-gencode arch=compute_100a,code=sm_100a
+\end{lstlisting}
+
+This explicit \texttt{a} target is required. On the local CUDA 13.1 install,
+\texttt{-arch=sm\_100a} lowered to plain \texttt{sm\_100} during ptxas, which
+rejects \texttt{tcgen05.*}.
+
+\section{Platform Notes}
+
+The code targets Blackwell server-family tensor-core instructions. The local
+RTX 5090 environment documented elsewhere in this repository reports
+\texttt{sm\_120}, and that target rejects \texttt{tcgen05.*} instructions. Full
+runtime validation requires an SM100/SM110-family target such as
+\texttt{sm\_100a} or \texttt{sm\_110a}.
+
+Local validation completed: Python syntax checking for \texttt{benchmark.py},
+TeX build to \texttt{REPORT.pdf}, and representative \texttt{sm\_100a}
+executable builds for dense \texttt{tcgen05.mma.kind::f16}, sparse
+\texttt{tcgen05.mma.sp.kind::f16}, the sparse TS operand form, sparse
+\texttt{tcgen05.mma.ws.sp.kind::f16}, sparse block-scaled \texttt{mxf8f6f4},
+\texttt{mxf4}, and \texttt{mxf4nvf4}, and sparse CTA-group 2 \texttt{i8}. Local
+runtime produces the expected launch error on this host:
+\texttt{no kernel image is available for execution on the device}.
+
+\section{References}
+
+\begin{itemize}
+\item NVIDIA PTX ISA 9.1, sparse \texttt{tcgen05.mma.sp} syntax and semantics:
+\url{https://docs.nvidia.com/cuda/archive/13.1.1/parallel-thread-execution/index.html#tensorcore-5th-generation-instructions-tcgen05-mma-sp}
+\item NVIDIA PTX ISA 9.1, sparse matrix formats:
+\url{https://docs.nvidia.com/cuda/archive/13.1.1/parallel-thread-execution/index.html#sparse-matrices}
+\item NVIDIA PTX ISA 9.1, instruction descriptor:
+\url{https://docs.nvidia.com/cuda/archive/13.1.1/parallel-thread-execution/index.html#instruction-descriptor}
+\item NVIDIA CUTLASS Blackwell functionality overview:
+\url{https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_functionality.html}
+\end{itemize}
+
+\end{document}
